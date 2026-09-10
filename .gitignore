@@ -1,0 +1,17 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+# Ignora pastas de build em qualquer módulo (app/build, etc.)
+build/
+**/build/
+
+# Lixo do Gradle
+.gradle/
+**/.gradle/

@@ -1,0 +1,327 @@
+﻿Version History
+---------------
+20/02/2026      v4.0.1
+                Corrected the case of the BankConfigurationGroup append() method.
+
+04/12/2026      v4.0.0
+                The Rfid.AsciiProtocol library has been updated to version 4.0.0.
+                It is built with target SDK 36.
+                MinSdkVersion is 26.
+                This library implements the TSL ASCII Protocol v3.0.
+
+                This release introduces the ASCII 3 STORM extensions.
+                For Series 3 Readers, this provides access to the additional power of the Reader's STORM module.
+                8 STORM Banks are available for use with the advanced RF commands provided by the 3N1X module.
+                These commands are activated using the new BankCommand.
+                Banks are configured using a subset of the parameters on existing ASCII commands along with new commands:
+                  - AccessCommand
+                  - AuthenticateCommand
+                  - DatastoreCommand
+                  - PACommand (Brazil PA Protocol support is only available on PA enabled Readers)
+
+                The BankConfigurationGroup is introduced to allow efficient configuration of Banks and the Datastore.
+                Multiple commands can be assembled into a group that is then executed in an optimised manner by sending
+                the commands all together and then waiting on the last command to complete.
+                Errors are reported as a set for any individual commands that fail.
+
+                The BulkEncoding Sample Project has been added to demonstrate the use of STORM extensions.
+                This sample project demonstrates the rapid rewriting of multiple tag EPCs made possible by the TSL 3N1X module.
+                See the "Android SDK v2.9.0 Developer Guide" for more details.
+
+                All ASCII Commands now have a CommandIdentifier() property that contains the command name, library marker, id value.
+                e.g. ".rd LCMD 000016"
+
+                Possible Breaking Change
+                  - getCommandLine() now has a fixed id value for each instance
+                    i.e. repeated calls to getCommandline() now return the same value whereas previously they included a changing id value.
+                    Contact support@tsl.com if your app requires a new id value each time getCommandline() is called.
+
+
+
+07/07/2025      v3.8.0
+                The Rfid.AsciiProtocol library has been updated to version 3.8.0.
+                It is built with target SDK 34.
+                MinSdkVersion is 26.
+                This library implements the TSL ASCII Protocol v3.0.
+
+                Support for BLE connections has been added but is disabled by default.
+                When BLE support is enabled, projects require the additional dependency:
+                    implementation 'com.github.weliem:blessed-android:2.5.0'
+                Projects that do not require BLE support can run unchanged and do not require the Blessed dependency.
+
+                Added support for 3138 Reader.
+
+10/09/2024      Implemented the AdditionalSelect option on all RF commands - use the TransponderSelectCommand to specify a 2nd set of select parameters.
+                When RF commands set the AdditionalSelect option, a Select, with values taken from the TransponderSelectCommand, will be executed first
+                followed by the RF command's Select parameters.
+                ChargeState enumeration updated for PowerHandle used in the 3138 UHF Reader.
+
+
+06/04/2024      v3.5.0
+                The Rfid.AsciiProtocol library has been updated to version 3.5.0. It is built with target SDK 34.
+                This library implements the TSL ASCII Protocol v3.0.
+
+                When a BT connection is lost, AsciiCommander will issue a ConnectionState.LOST event before the ConnectionState.DISCONNECTED event.
+
+				The following are only supported when executed on an ASCII Protocol v3 Reader (e.g. 3166):
+
+					All RF Commands e.g. Inventory, Read, Write etc.. can now specify halt conditions for the operation: the number of tags, the number of rounds and/or the duration.
+
+					BarcodeCommand responses now include a BarcodeSymbology instance describing the scanned barcode.
+				
+					The ReadTransponderCommand now has a SelectPause parameter to provide the necessary (3ms) pause needed when reading Magnus S3 temperature Sensor Tags.
+					
+					The AlertCommand now has an AlertVolume parameter that allows the volume to be set from 0 to 100%.
+
+					SystemCommand - see release v3.2.0
+					LinkProfileCommand - see release v3.2.0
+
+
+26/09/2023      v3.4.0
+                The Rfid.AsciiProtocol library has been updated to version 3.4.0. It is built with target SDK 33.
+                This library implements the TSL ASCII Protocol v2.5.
+
+                Support added for the 3166 Reader.
+
+
+10/08/2023      v3.3.0
+                The Rfid.AsciiProtocol library has been updated to version 3.3.0. It is built with target SDK 33.
+                This library implements the TSL ASCII Protocol v2.5.
+
+                ConnectionStatus now extends com.uk.tsl.utils.Observable<ConnectionState> to avoid API Level 33 deprecation errors.
+                This change requires that calls to ConnectionStatus.deleteObserver(...) are replaced with ConnectionStatus.removeObserver(...)
+
+                Added method IAsciiTransport getTransport(TransportType type) to the Reader class. This is primarily for internal TSL test apps.
+
+
+12/06/2023		v3.2.0
+                The Rfid.AsciiProtocol library has been updated to version 3.2.0. It is built with target SDK 33.
+                This library implements the TSL ASCII Protocol v2.5.
+				
+				Preliminary support for 3xxx series readers and ASCII Protocol v3.
+
+				A SystemCommand has been added that can be used to alter the baud rate of the ePop-Loq connection. The default baud rate remains at 115200.
+				An app can request a faster ePop-Loq rate to ensure that the additional throughput performance of the 3xxx series can be achieved.
+				This is only supported on series 3xxx readers.
+
+				The LinkProfileCommand has been added to allow the RF Mode, used to communicate with the tag, to be specified.
+				This command is reader and region specific. It is not usually necessary to change this setting on Series 1xxx or Series 2xxx readers.
+				For series 3xxx readers, the profile numbers are those listed in the STORM Protocol guide, under the $ir -rf parameter (RF Mode).
+
+
+17/01/2023      v3.1.0
+                The Rfid.AsciiProtocol library has been updated to version 3.1.0. It is built with target SDK 33.
+                This library implements the TSL ASCII Protocol v2.5.
+
+                This release fixes a bug that caused barcodes to be truncated when they contained line terminators 0x0D or 0x0A.
+                Note: by default, Barcode command line terminators are escaped, allowing multi-line barcodes to be scanned
+
+                Added Observable connection stateChangedEvent to AsciiCommander as replacement for the fully deprecated LocalBroadcastManager.
+                Updated Inventory project to use the new connection stateChanged events.
+                Note: LocalBroadcastManager support is retained to allow users time to transition to the new approach.
+
+                The Rfid.AsciiProtocol JavaDocs have been updated and now includes a search option.
+
+
+21/10/2022      v3.0.0
+                The Rfid.AsciiProtocol library has been updated to version 3.0.0 to meet the latest Google API requirements. It is built with target SDK 33.
+                This library implements the TSL ASCII Protocol v2.5.
+
+                To support the API31+ requirement of User permission checks, your app will need to issue the request for Bluetooth permissions where appropriate.
+                If this is not done then Bluetooth readers will NOT BE AVAILABLE - e.g. calls to ReaderManager.sharedInstance().updateList() will return an empty list.
+
+                https://developer.android.com/guide/topics/permissions/overview
+
+                The new permissions to be requested are:
+
+                    Manifest.permission.BLUETOOTH_CONNECT
+                    Manifest.permission.BLUETOOTH_SCAN
+
+                The library still provides the original permissions for older devices.
+
+                At an appropriate point in your application, ask the user for the above permissions.
+                When permissions are granted, call ReaderManager.sharedInstance().updateList() to ensure the reader list is up-to-date.
+
+                The sample projects have all been updated with examples of how this can be done - there are slight differences in implementation details due to the differing UIs.
+
+                The Sample code implementation asks for permission in the onStart() lifecycle method but you may find a better place in your own apps.
+
+                    @Override
+                    protected void onStart()
+                    {
+                        super.onStart();
+                        checkForBluetoothPermission();
+                    }
+
+                All Sample Projects have been updated to build against API Level 33.
+
+                To provide examples to developers starting new projects, the following have been re-written starting from the latest project templates
+                (Android Studio Dolphin (Build #AI-213.7172.25.2113.9014738)):
+
+                    Inventory
+                    ReadWrite
+                    ConfigureBarcode
+
+                Note: In the Activity onCreate(), the creation & initialisation of AsciiCommander and ReaderManager classes now occurs before the layout is inflated.
+                Inflation of the main UI triggers the lifecycle methods of the Fragment classes
+
+                The above projects now make use of simple ViewBinding to access the UI elements.
+
+                Bug Fixes:
+                 - The API31+ requirement for specifying the mutability of PendingIntents was causing null pointer crashes with the previous library - these are now fixed.
+
+
+12/11/2021      v2.5.0
+                A new ReadTagCommand has been added to the Rfid.AsciiProtocol-library that allows memory reads for the following HF/LF tag types:
+                Mifare Classic, ISO15693, SRX
+                The SignalStrengthResponder now has an ISignalStrengthCountDelegate property, to receive the number of different
+                transponders returning RSSI information.
+                Javadocs have been improved and comprehensively updated to ensure that all command properties have documentation on both Getters and Setters.
+
+13/07/2021      v2.4.1
+                Updated for Android API level 30
+
+25/11/2020      v2.4.0
+                Added Region property to the DeviceProperties.
+                Bug Fix: for incorrect output power levels for regional variants on 1166 & 21xx Readers.
+                Bug Fix: 2173 DeviceProperties now set correctly.
+                Hardened the exception handling for BT and USB transports
+                Added methods to support pairing/connection via NFC and scanned barcode
+
+15/01/2020      v2.3.1 (GM)
+                Support for ASCII Protocol 2.5:
+                Implemented a new InventoryTagCommand and corresponding HfLfTransponderData for use with HF/LF Readers
+                Implemented a new RfPassThroughCommand for the 2173 HF/LF RF module
+
+
+19/12/2019      v2.3.1 (Beta 1)
+                Updated to support ASCII Protocol 2.5:
+                A new FindTagCommand has been added for use with Readers that support it (e.g. 2128, 2166, 2128p, etc..)
+                Added Power Handle info to VersionInformationCommand.
+                Added Phase and Channel Frequency parameters to the Inventory and Read commands.
+                Implemented EchoCommand - for completeness, not especially useful to a program!
+                Duplicate Removal parameters implemented.
+                Duplicate visuals can be turned on/off.
+                AudibleAlertMode parameter defines when tone sounds.
+                Created BatteryStatusResponder to monitor asynchronous battery level notifications.
+                Added BatteryHealth and BatteryService information classes.
+                Added ShowRegionCommand.
+                AlertCommand now has additional parameters for controlling visuals on Readers with Antenna LEDs.
+                MountCommand implemented.
+                Added auto-reconnect parameters to SleepCommand.
+                Implemented BluetoothCommand.
+                Added new AutorunCommand and deprecated the separate Read/Write/Execute Autorun Commands.
+                Added SerialHidCommand - and special Responder to capture responses
+                Added a SignalStrengthResponder to capture the RSSI or percentage values from FindTag or Inventory commands
+
+
+08/10/2019      v2.2.1
+                Apps built with the library can now be tested with the Emulator however, no Readers will be available.
+
+16/08/2019      v2.2.0
+                Added the BlockPermalockTransponderCommand. This new command is supported on the 1166, 2166 and all 2128/IH21 variants (requires tags that support the command).
+
+06/02/2019      v2.1.0
+                Unhandled transport exceptions when notifying of receivedLines no longer drops the connection.
+                Added ResponderChainError delegate to AsciiCommander
+
+12/12/2018      v2.0.0
+                This is the first release of the unified SDK that supports both ePop-Loq/USB and Bluetooth Readers.
+                The ReaderManager and Reader classes from the ePop-Loq SDK (v1.9.x below) can now also handle Bluetooth devices.
+                A new Sample Project, ReaderManager, has been created that showcases the new ReaderManager classes and the updated DeviceList Activity project.
+                All other Sample projects have been updated to use the new ReaderManager and DeviceList Activity project.
+                The ConfigureBarcode Sample project now displays a Code 128 barcode on the UI to aid testing.
+
+14/05/2018      V1.9.3
+                Fixed bug in StringHelper.comparableVersionValue()
+13/02/2018      Added missing TransponderAccessErrorCode enumeration for ACCESS_ERROR
+01/02/2017      V1.9.0
+                The connection management code has been rewritten:
+                    Reader class introduced to represent a TSL UHF RFID Reader
+                        AsciiCommander now uses a Reader and, for backwards compatibility, broadcasts STATE_CHANGED_NOTIFICATION as Reader state changes
+                        Connect/Disconnect now achieved using the Reader instance not AsciiCommander
+                    New ReaderManager class introduce to provide:
+                        List of available Readers - this provides events for
+                            Addition of a Reader
+                            Deletion of a Reader
+                            Modification of a Reader
+
+                All Sample Projects have been converted to use the new ReaderManager and Reader classes.
+                ### This version only supports ePop-Loq ® and USB OTG connected Readers - there is no Bluetooth support in this release. ###
+
+                Added PopLoqMode parameter to FactoryDefaultsCommand to modify the operation of the ePop-Loq connector
+                 - supports PopLoqMode.CHARGE_ONLY and PopLoqMode.CHARGE_DATA
+                Support added for the 2128 & IH21 Bluetooth ® UHF RFID Readers
+
+10/07/2017      Added BarcodeConfiguration package for modifying the behaviour of the Motorola Imager.
+                Added the Sample project BarcodeConfiguration to demonstrate the basic API for enabling and adjusting the Imager.
+                Improved the reconnect code to prevent users from attempting manual connect before the reconnect has finished.
+                When reconnecting, better informational messages are displayed.
+23/06/2017      Added the ConfigureBarcodeCommand.
+21/06/2017      Added an index for each tag scanned to aid soak-tests
+06/01/2017      BugFix: Requesting the DateTime stamp no longer causes the reporting of transponders to fail in InventoryCommand, ReadTransponderCommand, etc...
+                The VersionInformationCommand now includes a property identifying the RF Engine uhf API version (for diagnostic purposes)
+                Sample projects now include the coarse location permission to allow the DeviceList Scan operation to work properly on Android v6+.
+
+20/12/2016      Rfid.AsciiProtocol-Library:
+                Improved performance with some Android v4 and Android v6 devices
+                The library is now distributed as an .arr file in the Rfid.AsciiProtocol-Library module
+
+                Sample Projects:
+                BugFix: Power level bar in Inventory and Read/Write Sample projects now adjusts and defaults to
+                        the maximum level for the connected reader
+
+10/11/2016      Fixed issue when Arabic language is set on the Android device.
+
+13/07/2016      Added support for antenna power below 10 for 1128 readers with firmware >= v4.2.0
+
+08/07/2016      Support added for the 1166 Bluetooth ® Rugged UHF RFID Reader in DeviceProperties class
+                Updated to support ASCII Protocol 2.4:
+                Added support for Impinj QT options on ReadTransponderCommand & WriteTransponderCommand
+                The ReadLogFileCommand can now determine the length of the log file (in bytes) and
+                    access the log in 512 byte blocks
+                InventoryCommand and ReadTransponderCommand now have a 'filter to strongest response' option
+                    and EPC identifier can now be omitted from responses
+                VersionInformationCommand now includes the Bluetooth Module Firmware Version
+                SwitchActionCommand now supports the AntennaDefaults option and can control the haptic feedback
+                Note - HID and BT related commands of ASCII protocol 2.4 are not implemented in this release
+
+                BugFix: ActionBar now visible in the Read/Write Sample
+                BugFix: The Index Number option on Inventory, ReadTransponder etc.. now assigns the correct
+                        index to tag responses
+
+09/01/2015      BugFix: BluetoothReaderService no longer leaves blocked threads each time it is stopped
+
+12/11/2014      Added LicenceKey Sample Project - demonstrates how to authorise a reader to only work with the reader supplier's software
+                Added LicenceKeyCommand - read/write/delete a licence key from the reader
+                Added getDeviceProperties() method to AsciiCommander that returns an object describing reader properties that may be
+                    different to the ASCII protocol limits in the library e.g. antenna power
+                Updated Inventory Sample project to demonstrate use of getDeviceProperties() method.
+                Added Bluetooth Address to VersionInformationCommand
+                Added switch repeat rate parameters to the SwitchActionCommand
+                Added SleepTimeoutCommand to configure the reader's sleep timeout duration
+                Updated to the latest Android v4 support library.
+                BugFix:	Life-cycle delegate responseBegan() method is no longer incorrectly invoked for non-library responses
+                        when the responder is not capturing non-library responses
+
+
+18/12/2013      BugFix: TransponderResponder no longer consumes the OK: and ER: responses.
+13/12/2013      BugFix: SwitchStateCommand state property is now a SwitchState not a SwitchAction!
+09/12/2013      Added Kill command
+06/12/2013      Added Lock command
+04/12/2013      Added Auto-run file commands
+                Added ReadLogFileCommand
+                AsciiCommander synchronous command timeout is now based on time since last reader response
+                Added WriteTransponderCommand
+
+03/12/2103      Added SwitchSinglePressUserActionCommand
+                Added SwitchDoublePressUserActionCommand
+                Added SwitchSinglePressCommand
+                Added SwitchDoublePressCommand
+
+02/12/2013      SwitchResponder class added for monitoring asynchronous switch reports
+                BugFix: SwitchAction now implements the ControlParameters correctly
+
+20/11/2013      AsciiCommander and BluetoothReaderService are now more robust when stopping and starting.
+                BluetoothReaderService no longer constructed with unused AsciiCommander.
+                BugFix: Repeated calls to AsciiCommander.connect() no longer causes SIGSEGV when closing bluetooth socket twice.

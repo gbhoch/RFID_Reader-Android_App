@@ -1,0 +1,7 @@
+rootProject.name = 'RfidInventory'
+
+include ':app'
+
+// Módulos do SDK Android da TSL (copiados de "SDK Android RFID")
+include ':Rfid.AsciiProtocol-Library'
+include ':DeviceList'

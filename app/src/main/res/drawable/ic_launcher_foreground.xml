@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Camada da frente do ícone adaptativo: uma etiqueta RFID emitindo ondas.
+
+  A arte fica dentro da zona segura de 72x72 no centro da tela de 108x108 — o
+  Android recorta a borda de formas diferentes em cada launcher, e o que passa
+  dos 72 pode ser cortado.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Corpo da etiqueta -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,42 L58,42 A5,5 0 0 1 63,47 L63,61 A5,5 0 0 1 58,66 L32,66 A5,5 0 0 1 27,61 L27,47 A5,5 0 0 1 32,42 Z" />
+
+    <!-- Antena serpenteada, vazada sobre a etiqueta -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0E2A47"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="square"
+        android:pathData="M34,50 L55,50 L55,58 L40,58 L40,54" />
+
+    <!-- Ondas de rádio -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M71,45 A15,15 0 0 1 71,63" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M78,38 A24,24 0 0 1 78,70" />
+</vector>

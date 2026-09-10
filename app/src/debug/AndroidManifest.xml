@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Só no debug: permite falar com o backend em HTTP durante o desenvolvimento.
+      O manifesto principal não declara networkSecurityConfig, então o merger só
+      adiciona este atributo no debug — release segue o padrão (somente HTTPS).
+    -->
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+
+</manifest>

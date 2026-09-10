@@ -1,0 +1,14 @@
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    >
+    <application
+        android:allowBackup="true"
+        >
+        <activity android:name="com.uk.tsl.rfid.DeviceListActivity"
+             android:theme="@android:style/Theme.DeviceDefault.Light"
+             android:configChanges="keyboardHidden|orientation"
+             android:label="@string/select_reader">
+        </activity>
+    </application>
+
+</manifest>

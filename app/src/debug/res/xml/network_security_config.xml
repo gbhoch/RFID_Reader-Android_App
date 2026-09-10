@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext liberado APENAS no build de debug: o backend em desenvolvimento roda
+  em HTTP puro (localhost:3000 / IP da LAN). Este arquivo vive em src/debug/, então
+  o build de release nunca o vê e mantém o padrão do Android (só HTTPS).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
