@@ -14,7 +14,7 @@ Construído sobre o SDK Android oficial da TSL (`Rfid.AsciiProtocol 4.0.1`), cop
    apontando para ele. Se preferir configurar na mão:
    ```properties
    # local.properties (não versionar)
-   sdk.dir=C\:\\Users\\gabriel.hochscheidt\\AppData\\Local\\Android\\Sdk
+   sdk.dir=C\:\\Users\\user\\AppData\\Local\\Android\\Sdk
    ```
 3. **Android SDK Platform 36** e **Build-Tools 35** — o Gradle baixa sozinho na primeira
    compilação, se o SDK Manager já tiver aceitado as licenças.
