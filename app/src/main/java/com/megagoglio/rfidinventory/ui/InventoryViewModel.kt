@@ -34,6 +34,9 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 
     val isScanning: StateFlow<Boolean> = app.inventory.isScanning
 
+    /** Filtro de EPC em vigor no leitor agora (null = nenhum). */
+    val activeEpcFilter = app.inventory.activeFilter
+
     val isLoggedIn: StateFlow<Boolean> = app.auth.isLoggedIn
 
     val operatorLogin: String? get() = app.auth.operatorLogin

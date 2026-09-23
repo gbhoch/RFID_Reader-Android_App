@@ -101,3 +101,22 @@ data class SectorEntity(
     val name: String,
     val acronym: String?,
 )
+
+/**
+ * Um filtro de EPC salvo pelo usuário para reuso (ex.: "Setor TI", "Notebooks").
+ *
+ * [startChar]/[lengthChar]/[valueHex] espelham [com.megagoglio.rfidinventory.reader.EpcFilterSpec]
+ * — a conversão para bits (unidade que o SDK da TSL realmente usa) acontece só na
+ * hora de aplicar o filtro no leitor, não na persistência.
+ */
+@Entity(tableName = "epc_filters")
+data class EpcFilterEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val startChar: Int,
+    val lengthChar: Int,
+    val valueHex: String,
+    /** Banco de memória do select. Hoje sempre o banco EPC; guardado para o dia em que outro banco fizer sentido. */
+    val bank: String = "EPC",
+    val createdAt: Long,
+)

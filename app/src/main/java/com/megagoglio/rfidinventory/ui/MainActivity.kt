@@ -31,6 +31,8 @@ class MainActivity : ComponentActivity() {
 
     private val loginViewModel: LoginViewModel by viewModels()
 
+    private val epcFilterViewModel: EpcFilterViewModel by viewModels()
+
     private val app: RfidApp get() = application as RfidApp
 
     /**
@@ -85,13 +87,18 @@ class MainActivity : ComponentActivity() {
             ) {
                 val loggedIn by viewModel.isLoggedIn.collectAsStateWithLifecycle()
                 var showingQueue by rememberSaveable { mutableStateOf(false) }
+                var showingEpcFilter by rememberSaveable { mutableStateOf(false) }
 
                 // Ao autenticar, busca o inventário aberto e a lista de setores. É aqui
                 // que o cache offline é preenchido — o operador entra no galpão com o
                 // contexto já no aparelho.
                 LaunchedEffect(loggedIn) {
-                    if (loggedIn) viewModel.refreshContext(announce = true)
-                    else showingQueue = false
+                    if (loggedIn) {
+                        viewModel.refreshContext(announce = true)
+                    } else {
+                        showingQueue = false
+                        showingEpcFilter = false
+                    }
                 }
 
                 when {
@@ -111,11 +118,25 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
+                    showingEpcFilter -> {
+                        // Mesma lógica do voltar da fila: sem isto o botão voltar do
+                        // sistema fecharia a Activity em vez de retornar ao inventário.
+                        BackHandler { showingEpcFilter = false }
+                        EpcFilterScreen(
+                            viewModel = epcFilterViewModel,
+                            recentTags = viewModel.tags.collectAsStateWithLifecycle().value,
+                            isScanning = viewModel.isScanning.collectAsStateWithLifecycle().value,
+                            onToggleScan = viewModel::toggleScan,
+                            onBack = { showingEpcFilter = false },
+                        )
+                    }
+
                     else -> InventoryScreen(
                         viewModel = viewModel,
                         onSelectReader = ::openReaderList,
                         onDisconnect = { app.connection.disconnect() },
                         onOpenQueue = { showingQueue = true },
+                        onOpenEpcFilter = { showingEpcFilter = true },
                         onLogout = viewModel::logout,
                     )
                 }

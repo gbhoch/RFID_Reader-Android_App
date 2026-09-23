@@ -5,6 +5,7 @@ import com.megagoglio.rfidinventory.data.auth.AuthRepository
 import com.megagoglio.rfidinventory.data.auth.TokenStore
 import com.megagoglio.rfidinventory.data.inventory.InventoryContextRepository
 import com.megagoglio.rfidinventory.data.local.AppDatabase
+import com.megagoglio.rfidinventory.data.local.EpcFilterRepository
 import com.megagoglio.rfidinventory.data.remote.ApiClient
 import com.megagoglio.rfidinventory.data.sync.SyncRepository
 import com.megagoglio.rfidinventory.reader.InventoryController
@@ -28,6 +29,9 @@ class RfidApp : Application() {
         private set
 
     lateinit var inventoryContext: InventoryContextRepository
+        private set
+
+    lateinit var epcFilters: EpcFilterRepository
         private set
 
     override fun onCreate() {
@@ -73,5 +77,6 @@ class RfidApp : Application() {
 
         inventoryContext = InventoryContextRepository(applicationContext, apiClient.inventoryApi, dao)
         syncRepository = SyncRepository(applicationContext, dao, apiClient.inventoryApi)
+        epcFilters = EpcFilterRepository(db.epcFilterDao())
     }
 }

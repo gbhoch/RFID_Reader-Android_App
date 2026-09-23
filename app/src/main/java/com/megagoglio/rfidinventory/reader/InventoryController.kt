@@ -7,7 +7,13 @@ import com.uk.tsl.rfid.asciiprotocol.commands.AlertCommand
 import com.uk.tsl.rfid.asciiprotocol.commands.FactoryDefaultsCommand
 import com.uk.tsl.rfid.asciiprotocol.commands.InventoryCommand
 import com.uk.tsl.rfid.asciiprotocol.enumerations.AlertDuration
+import com.uk.tsl.rfid.asciiprotocol.enumerations.Databank
+import com.uk.tsl.rfid.asciiprotocol.enumerations.QuerySelect
+import com.uk.tsl.rfid.asciiprotocol.enumerations.SelectAction
+import com.uk.tsl.rfid.asciiprotocol.enumerations.SelectTarget
 import com.uk.tsl.rfid.asciiprotocol.enumerations.TriState
+import com.uk.tsl.rfid.asciiprotocol.parameters.SelectControlParameters
+import com.uk.tsl.rfid.asciiprotocol.parameters.SelectMaskParameters
 import com.uk.tsl.rfid.asciiprotocol.responders.ICommandResponseLifecycleDelegate
 import com.uk.tsl.rfid.asciiprotocol.responders.ITransponderReceivedDelegate
 import com.uk.tsl.utils.HexEncoding
@@ -48,6 +54,11 @@ class InventoryController(private val commander: AsciiCommander) {
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
+    private val _activeFilter = MutableStateFlow<EpcFilterSpec?>(null)
+
+    /** Filtro de EPC em vigor no leitor (null = todas as tags são reportadas). */
+    val activeFilter: StateFlow<EpcFilterSpec?> = _activeFilter.asStateFlow()
+
     /**
      * Comandos síncronos NUNCA podem rodar na thread principal — o SDK bloqueia esperando
      * a resposta do leitor. Ver `runOffUIThread()` em ModelBase.java.
@@ -59,7 +70,7 @@ class InventoryController(private val commander: AsciiCommander) {
     private var lastAlertAtNanos = 0L
 
     /** Emite configuração e dispara os scans. */
-    private val inventoryCommand = InventoryCommand().apply {
+    private val inventoryCommand = LoggingInventoryCommand().apply {
         setResetParameters(TriState.YES)
         // O beep é dado pelo app, não pelo leitor, para poder respeitar o intervalo mínimo.
         useAlert = TriState.NO
@@ -155,6 +166,11 @@ class InventoryController(private val commander: AsciiCommander) {
             inventoryCommand.setIncludePC(TriState.YES)
             inventoryCommand.setIncludeDateTime(TriState.YES)
 
+            // O filtro de EPC não sobrevive a uma desconexão do leitor — se havia um
+            // ativo, reenviá-lo aqui é o que evita o operador ter de reconfigurar
+            // manualmente toda vez que o leitor cai e reconecta.
+            _activeFilter.value?.let { writeSelectFields(it) }
+
             commander.executeCommand(inventoryCommand)
         }.onFailure { Log.e(TAG, "Falha ao configurar o leitor", it) }
     }
@@ -166,6 +182,74 @@ class InventoryController(private val commander: AsciiCommander) {
             val command = FactoryDefaultsCommand().apply { setResetParameters(TriState.YES) }
             commander.executeCommand(command)
         }.onFailure { Log.e(TAG, "Falha ao restaurar padrões de fábrica", it) }
+    }
+
+    // ------------------------------------------------------------ filtro de EPC
+
+    /**
+     * Aplica um filtro de EPC no leitor: só tags cujo trecho casar com [spec] passam
+     * a ser reportadas. Os campos são propriedades do próprio [inventoryCommand] —
+     * não é preciso reexecutar nada aqui: se o scan contínuo já estiver rodando,
+     * `responseLifecycleDelegate.responseEnded()` reexecuta esse mesmo objeto a cada
+     * rodada e a rodada seguinte já sai com o filtro; se não estiver escaneando, o
+     * filtro entra em vigor no próximo [scanStart].
+     */
+    fun applyEpcFilter(spec: EpcFilterSpec): Result<Unit> {
+        if (!commander.isConnected) return Result.failure(IllegalStateException("Leitor desconectado"))
+        return runCatching {
+            writeSelectFields(spec)
+            _activeFilter.value = spec
+        }.onFailure { Log.e(TAG, "Falha ao aplicar filtro de EPC", it) }
+    }
+
+    /** Remove o filtro de EPC: o leitor volta a reportar todas as tags. */
+    fun clearEpcFilter() {
+        // Confirmado em campo (22/09/2026): voltar aos defaults do select + QuerySelect.ALL
+        // é suficiente — as tags reaparecem imediatamente, sem flag SL presa em nenhuma
+        // delas. Não é preciso mexer nas sessões Gen2 S0-S3.
+        SelectMaskParameters.setDefaultParametersFor(inventoryCommand)
+        SelectControlParameters.setDefaultParametersFor(inventoryCommand)
+        inventoryCommand.setQuerySelect(QuerySelect.ALL)
+        // Sem filtro não há Select a executar: voltar ao inventário puro evita uma
+        // operação por rodada à toa. Ver a explicação em writeSelectFields.
+        inventoryCommand.setInventoryOnly(TriState.YES)
+        _activeFilter.value = null
+    }
+
+    /** Converte [spec] (caracteres hex) para os campos de select do SDK (bits). */
+    private fun writeSelectFields(spec: EpcFilterSpec) {
+        inventoryCommand.setSelectBank(Databank.ELECTRONIC_PRODUCT_CODE)
+        inventoryCommand.setSelectOffset(EpcFilterSelectParams.offsetBits(spec))
+        inventoryCommand.setSelectLength(EpcFilterSelectParams.lengthBits(spec))
+        inventoryCommand.setSelectData(EpcFilterSelectParams.selectData(spec))
+
+        // Semântica do filtro positivo ("só reporta quem casa"), confirmada no Javadoc
+        // e no bytecode do SDK da TSL (Rfid.AsciiProtocol-Library/doc/):
+        //
+        // - ASSERT_SET_A_NOT_DEASSERT_SET_B é a ação 000 do Gen2. O próprio SDK a
+        //   descreve como "Match: Assert Select / Set Session A — Non Match: Deassert
+        //   Select / Set Session B": quem casa fica com a flag SL asserted, quem não
+        //   casa fica deasserted.
+        // - SelectTarget.SELECTED (argumento "sl") faz o Select agir sobre a flag SL,
+        //   e não sobre uma das sessões S0-S3.
+        // - QuerySelect.SELECTED ("sl" = "Selected transponders only") faz a rodada de
+        //   inventário responder apenas às tags com SL asserted.
+        //
+        // As três acima já estavam corretas. O que faltava era a linha abaixo:
+        //
+        // setInventoryOnly(YES) significa, no Javadoc do InventoryCommand, "the select
+        // operation is NOT performed before the inventory". O app nunca setava esse
+        // campo, então o switch -io jamais era enviado e valia o default do leitor —
+        // que pula o Select. Com -ql sl aplicado e nenhum Select executado, NENHUMA tag
+        // energiza com SL asserted e o inventário reporta zero, para qualquer máscara.
+        // Foi exatamente o que se mediu em campo. Como este comando também manda
+        // -x (setResetParameters(YES)) a cada rodada do scan contínuo, o valor precisa
+        // ser reenviado explicitamente em todas elas — e é o que acontece, porque os
+        // campos ficam no objeto que é reexecutado.
+        inventoryCommand.setSelectAction(SelectAction.ASSERT_SET_A_NOT_DEASSERT_SET_B)
+        inventoryCommand.setSelectTarget(SelectTarget.SELECTED)
+        inventoryCommand.setQuerySelect(QuerySelect.SELECTED)
+        inventoryCommand.setInventoryOnly(TriState.NO)
     }
 
     // ------------------------------------------------------------------ scan
@@ -201,6 +285,24 @@ class InventoryController(private val commander: AsciiCommander) {
         if (now - lastAlertAtNanos <= ALERT_MIN_INTERVAL_NANOS) return
         lastAlertAtNanos = now
         commander.executeCommand(alertCommand)
+    }
+
+    /**
+     * TEMPORÁRIO — diagnóstico do Select. Remover quando o filtro estiver validado.
+     *
+     * O SDK da TSL não expõe nenhum trace do que é enviado ao leitor, mas
+     * `buildCommandLine` é protected e não-final, então dá para ler a linha ASCII já
+     * montada sem reimplementar a serialização. Como o scan contínuo reexecuta o mesmo
+     * objeto a cada `responseEnded()`, cada rodada gera uma linha — é assim que se vê
+     * se os parâmetros sobrevivem ao `-x` da 2ª rodada em diante.
+     *
+     * Acompanhar com: `adb logcat -s InventoryController`
+     */
+    private class LoggingInventoryCommand : InventoryCommand() {
+        override fun buildCommandLine(sb: StringBuilder) {
+            super.buildCommandLine(sb)
+            Log.d(TAG, "TX: $sb")
+        }
     }
 
     private companion object {

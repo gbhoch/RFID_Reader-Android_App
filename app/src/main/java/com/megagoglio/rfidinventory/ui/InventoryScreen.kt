@@ -17,12 +17,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -56,10 +58,12 @@ fun InventoryScreen(
     onSelectReader: () -> Unit,
     onDisconnect: () -> Unit,
     onOpenQueue: () -> Unit,
+    onOpenEpcFilter: () -> Unit,
     onLogout: () -> Unit,
 ) {
     val readerState by viewModel.readerState.collectAsStateWithLifecycle()
     val tags by viewModel.tags.collectAsStateWithLifecycle()
+    val activeEpcFilter by viewModel.activeEpcFilter.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val pending by viewModel.pendingSessions.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
@@ -108,6 +112,19 @@ fun InventoryScreen(
                     }
                     IconButton(onClick = onOpenQueue) {
                         Icon(Icons.Default.CloudUpload, contentDescription = "Fila de envio")
+                    }
+                    IconButton(onClick = onOpenEpcFilter) {
+                        Icon(
+                            Icons.Default.FilterAlt,
+                            contentDescription = "Filtro de EPC",
+                            // Tingido quando há filtro ativo — o operador nunca deve
+                            // descobrir "na marra" que só uma parte das tags aparece.
+                            tint = if (activeEpcFilter != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                LocalContentColor.current
+                            },
+                        )
                     }
                     IconButton(onClick = onSelectReader) {
                         Icon(Icons.Default.Bluetooth, contentDescription = "Selecionar leitor")
