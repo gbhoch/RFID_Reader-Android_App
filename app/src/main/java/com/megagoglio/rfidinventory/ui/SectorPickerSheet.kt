@@ -13,9 +13,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -31,17 +33,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.megagoglio.rfidinventory.data.local.SectorEntity
+import java.text.Collator
+import java.text.Normalizer
+import java.util.Locale
 
 /**
  * Seletor de setor.
  *
- * A lista vem do cache local (Room), não da rede: trocar de setor no meio de um
+ * Ao abrir, a tela pede a lista completa ao servidor ([loading]); enquanto isso
+ * (e sem rede) mostra o cache local do Room. [fromCache] indica que a última busca
+ * falhou e o que aparece pode estar desatualizado — trocar de setor no meio de um
  * corredor sem sinal é o caso normal, não a exceção.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SectorPickerSheet(
     sectors: List<SectorEntity>,
+    loading: Boolean,
+    fromCache: Boolean,
     selectedId: String?,
     onSelect: (SectorEntity) -> Unit,
     onDismiss: () -> Unit,
@@ -49,12 +58,19 @@ fun SectorPickerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by remember { mutableStateOf("") }
 
-    val filtered = remember(sectors, query) {
-        val term = query.trim()
-        if (term.isEmpty()) sectors
-        else sectors.filter {
-            it.name.contains(term, ignoreCase = true) ||
-                it.acronym?.contains(term, ignoreCase = true) == true
+    // Ordenação no Kotlin, não no SQL: o ORDER BY do SQLite é binário (maiúsculas
+    // antes de minúsculas, acentuadas no fim), e os setores do ERP vêm em caixa alta.
+    val sorted = remember(sectors) {
+        val collator = Collator.getInstance(Locale("pt", "BR")).apply { strength = Collator.PRIMARY }
+        sectors.sortedWith { a, b -> collator.compare(a.name, b.name) }
+    }
+
+    val filtered = remember(sorted, query) {
+        val term = query.trim().foldForSearch()
+        if (term.isEmpty()) sorted
+        else sorted.filter {
+            it.name.foldForSearch().contains(term) ||
+                it.acronym?.foldForSearch()?.contains(term) == true
         }
     }
 
@@ -76,10 +92,54 @@ fun SectorPickerSheet(
             )
             Spacer(Modifier.size(8.dp))
 
+            if (loading) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Spacer(Modifier.size(4.dp))
+            }
+
+            if (fromCache && !loading) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                ) {
+                    Icon(
+                        Icons.Default.CloudOff,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Text(
+                        text = "Sem conexão com o servidor — lista salva no aparelho.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             if (sectors.isEmpty()) {
                 Text(
-                    text = "Nenhum setor no aparelho ainda. Conecte-se à rede e atualize " +
-                        "para baixar a lista.",
+                    text = if (loading) "Carregando setores…"
+                    else "Nenhum setor no aparelho ainda. Conecte-se à rede e reabra " +
+                        "esta lista para baixá-la.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+                return@Column
+            }
+
+            Text(
+                text = if (filtered.size == sorted.size) "${sorted.size} setores"
+                else "${filtered.size} de ${sorted.size} setores",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+
+            if (filtered.isEmpty()) {
+                Text(
+                    text = "Nenhum setor encontrado para \"${query.trim()}\".",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 16.dp),
@@ -123,3 +183,9 @@ fun SectorPickerSheet(
         }
     }
 }
+
+/** Minúsculas e sem acentos: "manutenção" encontra "MANUTENCAO" e vice-versa. */
+private fun String.foldForSearch(): String =
+    Normalizer.normalize(this, Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .lowercase(Locale.ROOT)

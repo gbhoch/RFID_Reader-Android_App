@@ -64,14 +64,20 @@ interface SessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSectors(sectors: List<SectorEntity>)
 
-    @Query("DELETE FROM sectors WHERE id NOT IN (:keep)")
-    suspend fun deleteSectorsMissingFrom(keep: List<String>)
+    @Query("DELETE FROM sectors")
+    suspend fun clearSectors()
 
-    /** Espelha a lista do servidor: insere/atualiza e remove o que sumiu do cadastro. */
+    /**
+     * Substitui o cache inteiro pela lista do servidor, numa transação: setor
+     * removido ou renomeado no cadastro não sobrevive no aparelho, e quem observa
+     * o Flow nunca vê a tabela vazia no meio da troca.
+     *
+     * Lista vazia também é aplicada — se o servidor diz que não há setores, o
+     * cache não pode continuar oferecendo os antigos.
+     */
     @Transaction
     suspend fun replaceSectors(sectors: List<SectorEntity>) {
-        if (sectors.isEmpty()) return
+        clearSectors()
         upsertSectors(sectors)
-        deleteSectorsMissingFrom(sectors.map { it.id })
     }
 }

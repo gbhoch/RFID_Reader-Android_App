@@ -18,9 +18,11 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.FilterAlt
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,6 +34,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -70,8 +73,12 @@ fun InventoryScreen(
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val sector by viewModel.sector.collectAsStateWithLifecycle()
     val sectors by viewModel.sectors.collectAsStateWithLifecycle()
+    val sectorsLoading by viewModel.sectorsLoading.collectAsStateWithLifecycle()
+    val sectorsFromCache by viewModel.sectorsFromCache.collectAsStateWithLifecycle()
     val unsentHere by viewModel.unsentForCurrentSector.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val tidMode by viewModel.tidMode.collectAsStateWithLifecycle()
+    val readingTidFor by viewModel.readingTidFor.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var pickingSector by remember { mutableStateOf(false) }
@@ -89,9 +96,17 @@ fun InventoryScreen(
         if (readerState.isConnected) viewModel.onReaderConnected()
     }
 
+    // Toda abertura do seletor busca a lista completa no servidor; o cache só
+    // aparece se a busca falhar.
+    LaunchedEffect(pickingSector) {
+        if (pickingSector) viewModel.refreshSectors()
+    }
+
     if (pickingSector) {
         SectorPickerSheet(
             sectors = sectors,
+            loading = sectorsLoading,
+            fromCache = sectorsFromCache,
             selectedId = sector?.id,
             onSelect = { chosen ->
                 viewModel.selectSector(chosen)
@@ -165,7 +180,18 @@ fun InventoryScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    items(tags, key = { it.epc }) { tag -> TagRow(tag) }
+                    items(tags, key = { it.epc }) { tag ->
+                        TagRow(
+                            tag = tag,
+                            isReadingTid = readingTidFor == tag.epc,
+                            // Leitura de TID é um comando ao leitor: exige conexão, uma
+                            // leitura por vez e o leitor livre — durante a varredura
+                            // contínua o comando não teria vez.
+                            canReadTid = readerState.isConnected && !isScanning &&
+                                readingTidFor == null,
+                            onReadTid = { viewModel.readTid(tag.epc) },
+                        )
+                    }
                 }
             }
 
@@ -177,10 +203,12 @@ fun InventoryScreen(
                 // Concluir o setor com coleta ainda na fila fecharia o setor no servidor
                 // antes de a leitura chegar — a conciliação rodaria sem ela.
                 canCompleteSector = sector != null && unsentHere == 0 && !busy,
+                tidMode = tidMode,
                 onToggleScan = viewModel::toggleScan,
                 onClear = viewModel::clearSession,
                 onFinish = viewModel::finishSession,
                 onCompleteSector = viewModel::completeSector,
+                onTidModeChange = viewModel::setTidMode,
             )
         }
     }
@@ -302,7 +330,12 @@ private fun Metric(label: String, value: String) {
 }
 
 @Composable
-private fun TagRow(tag: TagAggregate) {
+private fun TagRow(
+    tag: TagAggregate,
+    isReadingTid: Boolean,
+    canReadTid: Boolean,
+    onReadTid: () -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -319,13 +352,21 @@ private fun TagRow(tag: TagAggregate) {
                     style = MaterialTheme.typography.bodyMedium,
                     fontFamily = FontFamily.Monospace,
                 )
-                tag.tid?.let { tid ->
-                    Text(
-                        text = "TID $tid",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                // O TID só aparece quando foi realmente lido. Antes disso o rótulo diz
+                // que falta ler, em vez de sugerir um dado que o app não tem.
+                Text(
+                    text = tag.tid?.let { "TID $it" } ?: "TID não lido",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = if (tag.tid != null) FontFamily.Monospace else FontFamily.Default,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (isReadingTid) {
+                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.size(8.dp))
+            } else if (tag.tid == null) {
+                IconButton(onClick = onReadTid, enabled = canReadTid) {
+                    Icon(Icons.Default.Fingerprint, contentDescription = "Ler TID")
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -373,13 +414,39 @@ private fun ActionBar(
     hasTags: Boolean,
     hasSector: Boolean,
     canCompleteSector: Boolean,
+    tidMode: Boolean,
     onToggleScan: () -> Unit,
     onClear: () -> Unit,
     onFinish: () -> Unit,
     onCompleteSector: () -> Unit,
+    onTidModeChange: (Boolean) -> Unit,
 ) {
     Surface(tonalElevation = 3.dp) {
         Column(Modifier.padding(16.dp)) {
+            // Modo de auditoria de clonagem: custa uma leitura de banco por tag, então
+            // fica desligado por padrão e avisa do custo quando ligado.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Inventário com TID",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = if (tidMode) {
+                            "Lendo o TID de cada tag — leitura mais lenta."
+                        } else {
+                            "Só EPC. Use o botão de digital para ler o TID de uma tag."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = tidMode, onCheckedChange = onTidModeChange)
+            }
+            Spacer(Modifier.size(8.dp))
             Button(
                 onClick = onToggleScan,
                 enabled = isConnected,

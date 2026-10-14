@@ -50,6 +50,11 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
     val sectors: StateFlow<List<SectorEntity>> = app.inventoryContext.sectors
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val sectorsLoading: StateFlow<Boolean> = app.inventoryContext.sectorsLoading
+
+    /** A lista de setores na tela é o cache do aparelho (a última busca falhou). */
+    val sectorsFromCache: StateFlow<Boolean> = app.inventoryContext.sectorsFromCache
+
     /** Coleta do setor atual que ainda não subiu — impede concluir o setor cedo demais. */
     val unsentForCurrentSector: StateFlow<Int> = sector
         .flatMapLatest { current ->
@@ -72,6 +77,14 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 
     val recentSessions: StateFlow<List<SessionEntity>> = app.syncRepository.recentSessions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Modo de auditoria: a varredura contínua também lê o banco TID (mais lenta). */
+    val tidMode: StateFlow<Boolean> = app.inventory.tidMode
+
+    private val _readingTidFor = MutableStateFlow<String?>(null)
+
+    /** EPC cuja leitura de TID está em curso — segura o botão e mostra progresso. */
+    val readingTidFor: StateFlow<String?> = _readingTidFor.asStateFlow()
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -113,6 +126,17 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Busca a lista completa de setores. Chamado a cada abertura do seletor; a falha
+     * não vira snackbar porque o próprio seletor avisa que está mostrando o cache.
+     */
+    fun refreshSectors() {
+        viewModelScope.launch {
+            if (!app.auth.isLoggedIn.value) return@launch
+            app.inventoryContext.refreshSectors()
+        }
+    }
+
     fun toggleScan() {
         if (app.inventory.isScanning.value) {
             app.inventory.scanStop()
@@ -124,6 +148,38 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearSession() {
         _tags.value = emptyMap()
         sessionStartedAt = System.currentTimeMillis()
+    }
+
+    /**
+     * Lê o TID de UMA tag já inventariada. O TID exige uma operação extra por tag, então
+     * é pedido sob demanda em vez de vir em toda leitura — ver [InventoryController.readTid].
+     */
+    fun readTid(epc: String) {
+        // Uma leitura por vez: são comandos síncronos, e enfileirar dois deixaria o
+        // operador esperando sem saber qual está respondendo.
+        if (_readingTidFor.value != null) return
+        viewModelScope.launch {
+            _readingTidFor.value = epc
+            val result = app.inventory.readTid(epc)
+            _readingTidFor.value = null
+            result
+                .onSuccess { tid ->
+                    _tags.value = _tags.value.toMutableMap().apply {
+                        // A tag pode ter sido limpa enquanto a leitura corria.
+                        get(epc)?.let { put(epc, it.copy(tid = tid)) }
+                    }
+                    emit("TID lido: $tid")
+                }
+                .onFailure { emit(it.message ?: "Não foi possível ler o TID.") }
+        }
+    }
+
+    fun setTidMode(enabled: Boolean) {
+        app.inventory.setTidMode(enabled)
+        emit(
+            if (enabled) "Inventário com TID ligado — a leitura fica mais lenta."
+            else "Inventário com TID desligado.",
+        )
     }
 
     fun selectSector(sector: SectorEntity) {

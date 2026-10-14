@@ -6,16 +6,21 @@ import com.uk.tsl.rfid.asciiprotocol.commands.AbortCommand
 import com.uk.tsl.rfid.asciiprotocol.commands.AlertCommand
 import com.uk.tsl.rfid.asciiprotocol.commands.FactoryDefaultsCommand
 import com.uk.tsl.rfid.asciiprotocol.commands.InventoryCommand
+import com.uk.tsl.rfid.asciiprotocol.commands.ReadTransponderCommand
 import com.uk.tsl.rfid.asciiprotocol.enumerations.AlertDuration
 import com.uk.tsl.rfid.asciiprotocol.enumerations.Databank
 import com.uk.tsl.rfid.asciiprotocol.enumerations.QuerySelect
 import com.uk.tsl.rfid.asciiprotocol.enumerations.SelectAction
 import com.uk.tsl.rfid.asciiprotocol.enumerations.SelectTarget
 import com.uk.tsl.rfid.asciiprotocol.enumerations.TriState
+import com.uk.tsl.rfid.asciiprotocol.parameters.IQueryParameters
+import com.uk.tsl.rfid.asciiprotocol.parameters.ISelectControlParameters
+import com.uk.tsl.rfid.asciiprotocol.parameters.ISelectMaskParameters
 import com.uk.tsl.rfid.asciiprotocol.parameters.SelectControlParameters
 import com.uk.tsl.rfid.asciiprotocol.parameters.SelectMaskParameters
 import com.uk.tsl.rfid.asciiprotocol.responders.ICommandResponseLifecycleDelegate
 import com.uk.tsl.rfid.asciiprotocol.responders.ITransponderReceivedDelegate
+import com.uk.tsl.rfid.asciiprotocol.responders.TransponderData
 import com.uk.tsl.utils.HexEncoding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Inventário RFID: configura o leitor, escuta as tags e expõe cada leitura como um [TagRead].
@@ -59,6 +65,11 @@ class InventoryController(private val commander: AsciiCommander) {
     /** Filtro de EPC em vigor no leitor (null = todas as tags são reportadas). */
     val activeFilter: StateFlow<EpcFilterSpec?> = _activeFilter.asStateFlow()
 
+    private val _tidMode = MutableStateFlow(false)
+
+    /** Varredura contínua lendo também o banco TID de cada tag (mais lenta). */
+    val tidMode: StateFlow<Boolean> = _tidMode.asStateFlow()
+
     /**
      * Comandos síncronos NUNCA podem rodar na thread principal — o SDK bloqueia esperando
      * a resposta do leitor. Ver `runOffUIThread()` em ModelBase.java.
@@ -79,6 +90,27 @@ class InventoryController(private val commander: AsciiCommander) {
     /** Registrado como responder: captura as respostas de inventário. */
     private val inventoryResponder = InventoryCommand()
 
+    /**
+     * Emite a varredura do modo "inventário com TID" (ver [tidMode]). É um comando de
+     * LEITURA (`.rd`), não de inventário: além de singularizar cada tag ele lê o banco
+     * TID dela, o que custa uma operação extra por tag — daí o modo ser opcional.
+     */
+    private val tidScanCommand = ReadTransponderCommand().apply {
+        setResetParameters(TriState.YES)
+        useAlert = TriState.NO
+        setIncludeEpc(TriState.YES)
+        setIncludeTransponderRssi(TriState.YES)
+        setIncludeChecksum(TriState.YES)
+        setIncludePC(TriState.YES)
+        setIncludeDateTime(TriState.YES)
+        setBank(Databank.TRANSPONDER_IDENTIFIER)
+        setOffset(0)
+        setLength(TID_WORDS_EXTENDED)
+    }
+
+    /** Registrado como responder: captura as respostas da varredura com TID. */
+    private val tidScanResponder = ReadTransponderCommand()
+
     private val alertCommand = AlertCommand().apply {
         duration = AlertDuration.SHORT
     }
@@ -91,29 +123,7 @@ class InventoryController(private val commander: AsciiCommander) {
         inventoryResponder.setCaptureNonLibraryResponses(true)
 
         inventoryResponder.transponderReceivedDelegate =
-            ITransponderReceivedDelegate { transponder, _ ->
-                val epc = transponder.epc ?: return@ITransponderReceivedDelegate
-                anyTagSeenInPass = true
-
-                val errors = listOfNotNull(
-                    transponder.accessErrorCode?.description,
-                    transponder.backscatterErrorCode?.description,
-                ).joinToString("; ").ifEmpty { null }
-
-                val read = TagRead(
-                    epc = epc,
-                    tid = transponder.tidData?.let { HexEncoding.bytesToString(it) },
-                    rssi = transponder.rssi ?: 0,
-                    pc = transponder.pc ?: 0,
-                    crc = transponder.crc ?: 0,
-                    // Hora do celular, não do leitor: o relógio do leitor pode estar
-                    // desacertado e é a hora do host que vale para o sistema.
-                    seenAt = System.currentTimeMillis(),
-                    error = errors,
-                )
-                // Canal ilimitado: trySend nunca falha por buffer cheio.
-                reads.trySend(read)
-            }
+            ITransponderReceivedDelegate { transponder, _ -> publish(transponder) }
 
         inventoryResponder.responseLifecycleDelegate = object : ICommandResponseLifecycleDelegate {
             override fun responseBegan() {
@@ -124,14 +134,71 @@ class InventoryController(private val commander: AsciiCommander) {
                 if (anyTagSeenInPass) {
                     beep()
                 }
-                if (continuousScanEnabled) {
+                // Cada responder só realimenta a SUA varredura: o de inventário reemite o
+                // `.iv`, o de TID reemite o `.rd`. Sem essa checagem os dois disputariam o
+                // leitor ao alternar de modo.
+                if (continuousScanEnabled && !_tidMode.value) {
                     // O scan contínuo é o app reemitindo o comando a cada resposta concluída.
                     commander.executeCommand(inventoryCommand)
-                } else {
+                } else if (!continuousScanEnabled) {
                     inventoryCommand.takeNoAction = TriState.NO
                 }
             }
         }
+
+        tidScanResponder.setCaptureNonLibraryResponses(true)
+
+        tidScanResponder.transponderReceivedDelegate =
+            ITransponderReceivedDelegate { transponder, _ -> publish(transponder) }
+
+        tidScanResponder.responseLifecycleDelegate = object : ICommandResponseLifecycleDelegate {
+            override fun responseBegan() {
+                anyTagSeenInPass = false
+            }
+
+            override fun responseEnded() {
+                if (anyTagSeenInPass) {
+                    beep()
+                }
+                if (continuousScanEnabled && _tidMode.value) {
+                    commander.executeCommand(tidScanCommand)
+                }
+            }
+        }
+    }
+
+    /**
+     * Converte uma resposta do leitor em [TagRead] e a entrega ao fluxo.
+     *
+     * O TID pode chegar por dois campos distintos do SDK, e é por isso que os dois são
+     * consultados aqui: `tidData` é preenchido pelo Monza FastID (prefixo ASCII `TD`) e
+     * `readData` pelo resultado de um comando de leitura de banco (prefixo `RD`), que é
+     * o caminho que este app usa. Ler só `tidData`, como era antes, garantia TID nulo.
+     */
+    private fun publish(transponder: TransponderData) {
+        val epc = transponder.epc ?: return
+        anyTagSeenInPass = true
+
+        val errors = listOfNotNull(
+            transponder.accessErrorCode?.description,
+            transponder.backscatterErrorCode?.description,
+        ).joinToString("; ").ifEmpty { null }
+
+        val tidBytes = transponder.tidData ?: transponder.readData
+
+        val read = TagRead(
+            epc = epc,
+            tid = tidBytes?.takeIf { it.isNotEmpty() }?.let { HexEncoding.bytesToString(it) },
+            rssi = transponder.rssi ?: 0,
+            pc = transponder.pc ?: 0,
+            crc = transponder.crc ?: 0,
+            // Hora do celular, não do leitor: o relógio do leitor pode estar
+            // desacertado e é a hora do host que vale para o sistema.
+            seenAt = System.currentTimeMillis(),
+            error = errors,
+        )
+        // Canal ilimitado: trySend nunca falha por buffer cheio.
+        reads.trySend(read)
     }
 
     // ------------------------------------------------------------- responders
@@ -140,6 +207,7 @@ class InventoryController(private val commander: AsciiCommander) {
         if (respondersAttached) return
         respondersAttached = true
         commander.addResponder(inventoryResponder)
+        commander.addResponder(tidScanResponder)
     }
 
     fun detach() {
@@ -147,6 +215,7 @@ class InventoryController(private val commander: AsciiCommander) {
         respondersAttached = false
         if (continuousScanEnabled) scanStop()
         commander.removeResponder(inventoryResponder)
+        commander.removeResponder(tidScanResponder)
     }
 
     // ---------------------------------------------------------- configuração
@@ -213,6 +282,13 @@ class InventoryController(private val commander: AsciiCommander) {
         // Sem filtro não há Select a executar: voltar ao inventário puro evita uma
         // operação por rodada à toa. Ver a explicação em writeSelectFields.
         inventoryCommand.setInventoryOnly(TriState.YES)
+
+        // A varredura com TID tem o seu próprio jogo de parâmetros e precisa ser limpa
+        // junto, senão o filtro continuaria valendo só nela.
+        SelectMaskParameters.setDefaultParametersFor(tidScanCommand)
+        SelectControlParameters.setDefaultParametersFor(tidScanCommand)
+        tidScanCommand.setQuerySelect(QuerySelect.ALL)
+
         _activeFilter.value = null
     }
 
@@ -250,6 +326,112 @@ class InventoryController(private val commander: AsciiCommander) {
         inventoryCommand.setSelectTarget(SelectTarget.SELECTED)
         inventoryCommand.setQuerySelect(QuerySelect.SELECTED)
         inventoryCommand.setInventoryOnly(TriState.NO)
+
+        // O mesmo filtro precisa valer na varredura com TID, senão ligar o modo de
+        // auditoria faria o filtro sumir sem aviso.
+        writeEpcSelect(tidScanCommand, spec)
+        tidScanCommand.setInventoryOnly(TriState.NO)
+    }
+
+    /**
+     * Escreve uma máscara de Select positiva sobre qualquer comando que aceite esses
+     * parâmetros — é o mesmo jogo usado pelo filtro de EPC e pela singularização de uma
+     * tag na leitura de TID.
+     */
+    private fun <T> writeEpcSelect(command: T, spec: EpcFilterSpec)
+        where T : ISelectMaskParameters, T : ISelectControlParameters, T : IQueryParameters {
+        command.setSelectBank(Databank.ELECTRONIC_PRODUCT_CODE)
+        command.setSelectOffset(EpcFilterSelectParams.offsetBits(spec))
+        command.setSelectLength(EpcFilterSelectParams.lengthBits(spec))
+        command.setSelectData(EpcFilterSelectParams.selectData(spec))
+        command.setSelectAction(SelectAction.ASSERT_SET_A_NOT_DEASSERT_SET_B)
+        command.setSelectTarget(SelectTarget.SELECTED)
+        command.setQuerySelect(QuerySelect.SELECTED)
+    }
+
+    // ------------------------------------------------------------------- TID
+
+    /**
+     * O TID mora num banco de memória separado do EPC e, ao contrário dele, não vem de
+     * graça na varredura: exige um comando de leitura (`.rd`) que singulariza a tag e lê
+     * o banco `tid`, ou seja, uma operação a mais por tag. Por isso o padrão do app é
+     * ler SOB DEMANDA — o inventário contínuo segue rápido, só com EPC, e o operador
+     * pede o TID da tag que interessa.
+     *
+     * O SDK tem um atalho que traria o TID junto com o EPC sem custo
+     * (`InventoryCommand.setUsefastId`, o Monza FastID), mas o Javadoc o marca como
+     * "Impinj Specific": em chips de outros fabricantes o campo volta vazio, em
+     * silêncio. Numa auditoria de clonagem isso seria um falso negativo, então o modo
+     * contínuo ([tidMode]) usa o caminho universal do [ReadTransponderCommand] e assume
+     * o custo de velocidade.
+     *
+     * Offset e comprimento aqui são em WORDS DE 16 BITS, não em bits — é o que diz o
+     * Javadoc de `IDatabankParameters` ("the offset, in 16 bit words"). Não confundir
+     * com o Select do filtro de EPC, esse sim em bits.
+     */
+    suspend fun readTid(epc: String): Result<String> = withContext(Dispatchers.IO) {
+        if (!commander.isConnected) {
+            return@withContext Result.failure(IllegalStateException("Leitor desconectado."))
+        }
+        // O `.rd` e a varredura contínua disputariam o mesmo leitor: o comando síncrono
+        // ficaria preso esperando uma resposta que pertence ao inventário em curso.
+        if (continuousScanEnabled) {
+            return@withContext Result.failure(
+                IllegalStateException("Pare a leitura antes de ler o TID de uma tag."),
+            )
+        }
+        // Tenta primeiro o TID estendido, que é o único que carrega o serial único e
+        // portanto o único que serve para anticlonagem. Chips sem TID estendido recusam
+        // a leitura de 6 words; nesses cai para os 32 bits obrigatórios do Gen2, que
+        // identificam fabricante e modelo mas não a peça.
+        readTidWords(epc, TID_WORDS_EXTENDED)
+            .recoverCatching { readTidWords(epc, TID_WORDS_MINIMUM).getOrThrow() }
+    }
+
+    private fun readTidWords(epc: String, words: Int): Result<String> {
+        var captured: String? = null
+        var reportedError: String? = null
+
+        val command = ReadTransponderCommand.synchronousCommand().apply {
+            setIncludeEpc(TriState.YES)
+            setBank(Databank.TRANSPONDER_IDENTIFIER)
+            setOffset(0)
+            setLength(words)
+            // Singulariza esta tag usando o EPC inteiro como máscara de Select: só ela
+            // responde à leitura, mesmo com outras tags no campo.
+            writeEpcSelect(this, EpcFilterSpec(startChar = 0, lengthChar = epc.length, valueHex = epc))
+            // Sem isto o leitor pula o Select e leria o TID de qualquer tag que
+            // aparecesse primeiro — o mesmo detalhe que quebrava o filtro de EPC.
+            setInventoryOnly(TriState.NO)
+            transponderReceivedDelegate = ITransponderReceivedDelegate { transponder, _ ->
+                transponder.readData
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let { captured = HexEncoding.bytesToString(it) }
+                reportedError = listOfNotNull(
+                    transponder.accessErrorCode?.description,
+                    transponder.backscatterErrorCode?.description,
+                ).joinToString("; ").ifEmpty { null }
+            }
+        }
+
+        return runCatching { commander.executeCommand(command) }
+            .mapCatching {
+                captured ?: throw IllegalStateException(
+                    reportedError ?: "A tag não respondeu. Aproxime o leitor e tente de novo.",
+                )
+            }
+            .onFailure { Log.w(TAG, "Falha ao ler o TID de $epc com $words words", it) }
+    }
+
+    /**
+     * Liga/desliga o modo "inventário com TID". Para a varredura em curso: trocar o
+     * comando que alimenta o leitor no meio de uma rodada deixaria os dois responders
+     * disputando o canal.
+     */
+    fun setTidMode(enabled: Boolean) {
+        if (_tidMode.value == enabled) return
+        if (continuousScanEnabled) scanStop()
+        _tidMode.value = enabled
     }
 
     // ------------------------------------------------------------------ scan
@@ -259,9 +441,14 @@ class InventoryController(private val commander: AsciiCommander) {
         if (!commander.isConnected) return@launch
         continuousScanEnabled = true
         _isScanning.value = true
-        inventoryCommand.takeNoAction = TriState.NO
-        runCatching { commander.executeCommand(inventoryCommand) }
-            .onFailure { Log.e(TAG, "Falha ao iniciar o scan", it) }
+        if (_tidMode.value) {
+            runCatching { commander.executeCommand(tidScanCommand) }
+                .onFailure { Log.e(TAG, "Falha ao iniciar o scan com TID", it) }
+        } else {
+            inventoryCommand.takeNoAction = TriState.NO
+            runCatching { commander.executeCommand(inventoryCommand) }
+                .onFailure { Log.e(TAG, "Falha ao iniciar o scan", it) }
+        }
     }
 
     fun scanStop() {
@@ -308,5 +495,11 @@ class InventoryController(private val commander: AsciiCommander) {
     private companion object {
         const val TAG = "InventoryController"
         const val ALERT_MIN_INTERVAL_NANOS = 400L * 1000 * 1000
+
+        /** TID estendido: 96 bits = 6 words. É o trecho que carrega o serial único da peça. */
+        const val TID_WORDS_EXTENDED = 6
+
+        /** TID mínimo do Gen2: 32 bits = 2 words (classe, fabricante e modelo, sem serial). */
+        const val TID_WORDS_MINIMUM = 2
     }
 }

@@ -8,10 +8,13 @@ import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody
 import okhttp3.Route
 import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Converter
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.lang.reflect.Type
 import java.util.concurrent.TimeUnit
 
 /**
@@ -67,9 +70,32 @@ class ApiClient(
     val inventoryApi: InventoryApi = Retrofit.Builder()
         .baseUrl(baseUrl)
         .client(httpClient)
+        // Antes do Gson, para interceptar o corpo vazio — ver NullOnEmptyConverterFactory.
+        .addConverterFactory(NullOnEmptyConverterFactory)
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(InventoryApi::class.java)
+}
+
+/**
+ * Corpo vazio vira `null` em vez de exceção.
+ *
+ * O NestJS responde `200` SEM corpo quando o handler devolve `null` — é o caso de
+ * `GET inventory/current` sem inventário aberto. O conversor do Gson lança
+ * `EOFException` nesse corpo vazio, e o app tratava "nenhum inventário aberto"
+ * como "sem conexão", abortando o resto da atualização (inclusive os setores).
+ */
+private object NullOnEmptyConverterFactory : Converter.Factory() {
+    override fun responseBodyConverter(
+        type: Type,
+        annotations: Array<out Annotation>,
+        retrofit: Retrofit,
+    ): Converter<ResponseBody, *> {
+        val delegate = retrofit.nextResponseBodyConverter<Any>(this, type, annotations)
+        return Converter<ResponseBody, Any?> { body ->
+            if (body.contentLength() == 0L) null else delegate.convert(body)
+        }
+    }
 }
 
 /** Injeta `Authorization: Bearer` em toda requisição que tenha token. */

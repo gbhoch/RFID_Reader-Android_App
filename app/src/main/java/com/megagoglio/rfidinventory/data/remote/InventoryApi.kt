@@ -33,11 +33,16 @@ interface InventoryApi {
     @GET("api/v1/inventory/current")
     suspend fun currentInventory(): Response<InventoryDto>
 
-    /** Setores para o operador escolher. Cacheado no Room para uso offline. */
+    /**
+     * Setores para o operador escolher. Cacheado no Room para uso offline.
+     *
+     * PAGINADO no servidor (`{ data, total }`, take padrão 20): quem chama precisa
+     * percorrer as páginas até `total` — ver `InventoryContextRepository.refreshSectors`.
+     */
     @GET("api/v1/sectors")
     suspend fun sectors(
-        @Query("skip") skip: Int = 0,
-        @Query("take") take: Int = 200,
+        @Query("skip") skip: Int,
+        @Query("take") take: Int,
     ): Response<PageDto<SectorDto>>
 
     /**
